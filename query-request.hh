@@ -303,6 +303,8 @@ public:
     std::optional<query::max_result_size> max_result_size;
     uint32_t row_limit_high_bits;
     api::timestamp_type read_timestamp; // not serialized
+    sstring query_string;
+
 public:
     // IDL constructor
     read_command(utils::UUID cf_id,
@@ -315,7 +317,8 @@ public:
                  utils::UUID query_uuid,
                  query::is_first_page is_first_page,
                  std::optional<query::max_result_size> max_result_size,
-                 uint32_t row_limit_high_bits)
+                 uint32_t row_limit_high_bits,
+                 sstring query_str)
         : cf_id(std::move(cf_id))
         , schema_version(std::move(schema_version))
         , slice(std::move(slice))
@@ -328,6 +331,7 @@ public:
         , max_result_size(max_result_size)
         , row_limit_high_bits(row_limit_high_bits)
         , read_timestamp(api::new_timestamp())
+        , query_string(std::move(query_str))
     { }
 
     read_command(utils::UUID cf_id,
@@ -340,7 +344,8 @@ public:
             std::optional<tracing::trace_info> ti = std::nullopt,
             utils::UUID query_uuid = utils::UUID(),
             query::is_first_page is_first_page = query::is_first_page::no,
-            api::timestamp_type rt = api::new_timestamp())
+            api::timestamp_type rt = api::new_timestamp(),
+            sstring query_str = sstring())
         : cf_id(std::move(cf_id))
         , schema_version(std::move(schema_version))
         , slice(std::move(slice))
@@ -353,6 +358,7 @@ public:
         , max_result_size(max_result_size)
         , row_limit_high_bits(static_cast<uint32_t>(static_cast<uint64_t>(row_limit) >> 32))
         , read_timestamp(rt)
+        , query_string(std::move(query_str))
     { }
 
 

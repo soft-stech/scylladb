@@ -377,6 +377,8 @@ public:
         // Not really table-specific (it's a global configuration parameter), but stored here
         // for easy access from `table` member functions:
         utils::updateable_value<bool> reversed_reads_auto_bypass_cache{true};
+        uint32_t tombstone_warn_threshold = {0};
+        uint32_t tombstone_failure_threshold = {0};
     };
     struct no_commitlog {};
 

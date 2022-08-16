@@ -120,7 +120,8 @@ private:
             range,
             _s.schema()->full_slice(),
             service::get_local_sstable_query_read_priority(),
-            nullptr);
+            nullptr,
+            std::nullopt);
     }
 
     static utils::UUID make_cache_key(unsigned key) {
@@ -675,7 +676,8 @@ SEASTAR_THREAD_TEST_CASE(test_resources_based_cache_eviction) {
                 utils::make_random_uuid(),
                 query::is_first_page::yes,
                 query::max_result_size(1024 * 1024),
-                0);
+                0,
+                sstring());
 
         // Should save the querier in cache.
         db.query_mutations(s,
@@ -705,7 +707,8 @@ SEASTAR_THREAD_TEST_CASE(test_resources_based_cache_eviction) {
                 utils::make_random_uuid(),
                 query::is_first_page::no,
                 query::max_result_size(1024 * 1024),
-                0);
+                0,
+                sstring());
 
         // Should evict the already cached querier.
         db.query_mutations(s,

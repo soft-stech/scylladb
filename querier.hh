@@ -108,6 +108,19 @@ struct position_view {
 
 class querier_base {
     friend class querier_utils;
+public:
+    struct querier_stats {
+        uint64_t live {0};
+        uint64_t dead {0};
+    };
+
+    struct querier_config {
+        uint32_t tombstone_warn_threshold {0}; // 0 disabled
+        uint32_t tombstone_failure_threshold {0}; // 0 disabled
+        sstring query_raw_string;
+        querier_config(uint32_t warn, uint32_t failure, const sstring& query_str)
+        : tombstone_warn_threshold(warn), tombstone_failure_threshold(failure), query_raw_string(query_str) {}
+    };
 
 protected:
     schema_ptr _schema;
@@ -116,6 +129,8 @@ protected:
     std::unique_ptr<const query::partition_slice> _slice;
     std::variant<flat_mutation_reader, reader_concurrency_semaphore::inactive_read_handle> _reader;
     dht::partition_ranges_view _query_ranges;
+    std::optional<querier_config> _qr_config;
+    querier_stats _qr_stats;
 
 public:
     querier_base(reader_permit permit, std::unique_ptr<const dht::partition_range> range,
@@ -129,13 +144,14 @@ public:
     { }
 
     querier_base(schema_ptr schema, reader_permit permit, dht::partition_range range,
-            query::partition_slice slice, const mutation_source& ms, const io_priority_class& pc, tracing::trace_state_ptr trace_ptr)
+            query::partition_slice slice, const mutation_source& ms, const io_priority_class& pc, tracing::trace_state_ptr trace_ptr, std::optional<querier_config> config)
         : _schema(std::move(schema))
         , _permit(std::move(permit))
         , _range(std::make_unique<const dht::partition_range>(std::move(range)))
         , _slice(std::make_unique<const query::partition_slice>(std::move(slice)))
         , _reader(ms.make_reader(_schema, _permit, *_range, *_slice, pc, std::move(trace_ptr), streamed_mutation::forwarding::no, mutation_reader::forwarding::no))
         , _query_ranges(*_range)
+        , _qr_config(std::move(config))
     { }
 
     querier_base(querier_base&&) = default;
@@ -201,8 +217,9 @@ public:
             dht::partition_range range,
             query::partition_slice slice,
             const io_priority_class& pc,
-            tracing::trace_state_ptr trace_ptr)
-        : querier_base(schema, permit, std::move(range), std::move(slice), ms, pc, std::move(trace_ptr))
+            tracing::trace_state_ptr trace_ptr,
+            std::optional<querier_config> config)
+        : querier_base(schema, permit, std::move(range), std::move(slice), ms, pc, std::move(trace_ptr), std::move(config))
         , _compaction_state(make_lw_shared<compact_for_query_state<OnlyLive>>(*schema, gc_clock::time_point{}, *_slice, 0, 0)) {
     }
 
@@ -230,6 +247,8 @@ public:
                     cstats.clustering_rows.live,
                     cstats.clustering_rows.dead,
                     cstats.range_tombstones);
+            _qr_stats.live += cstats.static_rows.live + cstats.clustering_rows.live;
+            _qr_stats.dead += cstats.static_rows.dead + cstats.clustering_rows.dead + cstats.range_tombstones;
             constexpr auto size = std::tuple_size<std::decay_t<decltype(results)>>::value;
             static_assert(size <= 2);
             if constexpr (size == 1) {

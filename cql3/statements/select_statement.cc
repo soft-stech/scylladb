@@ -333,7 +333,8 @@ select_statement::do_execute(service::storage_proxy& proxy,
             tracing::make_trace_info(state.get_trace_state()),
             utils::UUID(),
             query::is_first_page::no,
-            options.get_timestamp(state));
+            options.get_timestamp(state),
+            raw_cql_statement);
 
     int32_t page_size = options.get_page_size();
 

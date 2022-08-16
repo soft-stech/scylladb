@@ -801,7 +801,8 @@ SEASTAR_TEST_CASE(database_drop_column_family_clears_querier_cache) {
                 query::full_partition_range,
                 s->full_slice(),
                 default_priority_class(),
-                nullptr);
+                nullptr,
+                std::nullopt);
 
         auto f = e.db().invoke_on_all([ts] (database& db) {
             return db.drop_column_family("ks", "cf", [ts] { return make_ready_future<db_clock::time_point>(ts); });

@@ -31,6 +31,7 @@
 namespace query {
 
 logging::logger qlogger("querier_cache");
+logging::logger qrlogger("querier");
 
 enum class can_use {
     yes,
@@ -391,6 +392,14 @@ std::optional<shard_mutation_querier> querier_cache::lookup_shard_mutation_queri
 }
 
 future<> querier_base::close() noexcept {
+    if (_qr_config) {
+        if ((*_qr_config).tombstone_failure_threshold > 0 && _qr_stats.dead >= (*_qr_config).tombstone_failure_threshold) {
+            qrlogger.error("Read {} live rows and {} tombstones for query {} {} (see tombstone_failure_threshold)", _qr_stats.live, _qr_stats.dead, (*_qr_config).query_raw_string, (*_range.get()));
+        } else if ((*_qr_config).tombstone_warn_threshold > 0 && _qr_stats.dead >= (*_qr_config).tombstone_warn_threshold) {
+            qrlogger.warn("Read {} live rows and {} tombstones for query {} {} (see tombstone_warn_threshold)", _qr_stats.live, _qr_stats.dead, (*_qr_config).query_raw_string, (*_range.get()));
+        }
+    }
+
     struct variant_closer {
         querier_base& q;
         future<> operator()(flat_mutation_reader& reader) {
