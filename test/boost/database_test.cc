@@ -1215,7 +1215,8 @@ SEASTAR_TEST_CASE(database_drop_column_family_clears_querier_cache) {
                 query::full_partition_range,
                 s->full_slice(),
                 default_priority_class(),
-                nullptr);
+                nullptr,
+                std::nullopt);
 
         auto f = replica::database::drop_table_on_all_shards(e.db(), "ks", "cf");
 

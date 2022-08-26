@@ -109,7 +109,8 @@ private:
             range,
             _s.schema()->full_slice(),
             service::get_local_sstable_query_read_priority(),
-            nullptr);
+            nullptr,
+            std::nullopt);
     }
 
     static query_id make_cache_key(unsigned key) {
