@@ -14,6 +14,7 @@
 #include "reader_concurrency_semaphore.hh"
 #include "readers/mutation_source.hh"
 #include "full_position.hh"
+#include "utils/utf8.hh"
 
 #include <boost/intrusive/set.hpp>
 
@@ -147,6 +148,30 @@ public:
 class querier : public querier_base {
     lw_shared_ptr<compact_for_query_state_v2> _compaction_state;
 
+    sstring current_range_to_string() const {
+        sstring keystr = "<no key>";
+        std::optional<partition_key> key(std::nullopt);
+
+        if (const dht::partition_range* prange = _range.get()) {
+            if (const auto& start = prange->start()) {
+                key = start->value().key();
+            } else if (const auto& end = prange->end()) {
+                key = end->value().key();
+            }
+        }
+
+        if (key) {
+            keystr = partition_key_to_string(*key, *_schema.get());
+        }
+
+        return keystr;
+    }
+
+    static sstring partition_key_to_string(const partition_key& key, const ::schema& s) {
+        sstring ret = format("{}", key.with_schema(s));
+        return utils::utf8::validate((const uint8_t*)ret.data(), ret.size()) ? ret : "<non-utf8-key>";
+    }
+
 public:
     querier(const mutation_source& ms,
             schema_ptr schema,
@@ -184,9 +209,12 @@ public:
                     cstats.clustering_rows.dead,
                     cstats.range_tombstones);
             auto dead = cstats.static_rows.dead + cstats.clustering_rows.dead + cstats.range_tombstones;
+
             if (_qr_config && (*_qr_config).tombstone_warn_threshold > 0 && dead >= (*_qr_config).tombstone_warn_threshold) {
                 auto live = cstats.static_rows.live + cstats.clustering_rows.live;
-                qrlogger.warn("Read {} live rows and {} tombstones for query {} {} (see tombstone_warn_threshold)", live, dead, (*_qr_config).query_raw_string, (*_range.get()));
+                sstring keystr = current_range_to_string();
+
+                qrlogger.warn("Read {} live rows and {} tombstones for query {} {} (see tombstone_warn_threshold)", live, dead, (*_qr_config).query_raw_string, keystr);
             }
             return std::move(fut);
         });
