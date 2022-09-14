@@ -362,8 +362,7 @@ select_statement::do_execute(query_processor& qp,
             query_id::create_null_id(),
             query::is_first_page::no,
             options.get_timestamp(state),
-            db::allow_per_partition_rate_limit::no,
-            raw_cql_statement);
+            db::allow_per_partition_rate_limit::no);
     command->allow_limit = db::allow_per_partition_rate_limit::yes;
 
     int32_t page_size = options.get_page_size();
@@ -536,8 +535,7 @@ indexed_table_select_statement::prepare_command_for_base_query(query_processor& 
             query_id::create_null_id(),
             query::is_first_page::no,
             options.get_timestamp(state),
-            db::allow_per_partition_rate_limit::no,
-            raw_cql_statement);
+            db::allow_per_partition_rate_limit::no);
     cmd->allow_limit = db::allow_per_partition_rate_limit::yes;
     return cmd;
 }
@@ -1251,8 +1249,7 @@ indexed_table_select_statement::read_posting_list(query_processor& qp,
             query_id::create_null_id(),
             query::is_first_page::no,
             options.get_timestamp(state),
-            db::allow_per_partition_rate_limit::no,
-            raw_cql_statement);
+            db::allow_per_partition_rate_limit::no);
 
     std::vector<const column_definition*> columns;
     for (const column_definition& cdef : _schema->partition_key_columns()) {
@@ -1539,8 +1536,7 @@ parallelized_select_statement::do_execute(
         query_id::create_null_id(),
         query::is_first_page::no,
         options.get_timestamp(state),
-        db::allow_per_partition_rate_limit::no,
-        raw_cql_statement
+        db::allow_per_partition_rate_limit::no
     );
     auto key_ranges = _restrictions->get_partition_key_ranges(options);
 

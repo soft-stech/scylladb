@@ -310,8 +310,6 @@ public:
     uint64_t tombstone_limit;
     api::timestamp_type read_timestamp; // not serialized
     db::allow_per_partition_rate_limit allow_limit; // not serialized
-    // For some queries it would be empty
-    sstring query_string;
 public:
     // IDL constructor
     read_command(table_id cf_id,
@@ -325,8 +323,7 @@ public:
                  query::is_first_page is_first_page,
                  std::optional<query::max_result_size> max_result_size,
                  uint32_t row_limit_high_bits,
-                 uint64_t tombstone_limit,
-                 sstring query_str)
+                 uint64_t tombstone_limit)
         : cf_id(std::move(cf_id))
         , schema_version(std::move(schema_version))
         , slice(std::move(slice))
@@ -341,7 +338,6 @@ public:
         , tombstone_limit(tombstone_limit)
         , read_timestamp(api::new_timestamp())
         , allow_limit(db::allow_per_partition_rate_limit::no)
-        , query_string(std::move(query_str))
     { }
 
     read_command(table_id cf_id,
@@ -356,8 +352,7 @@ public:
             query_id query_uuid = query_id::create_null_id(),
             query::is_first_page is_first_page = query::is_first_page::no,
             api::timestamp_type rt = api::new_timestamp(),
-            db::allow_per_partition_rate_limit allow_limit = db::allow_per_partition_rate_limit::no,
-            sstring query_str = sstring())
+            db::allow_per_partition_rate_limit allow_limit = db::allow_per_partition_rate_limit::no)
         : cf_id(std::move(cf_id))
         , schema_version(std::move(schema_version))
         , slice(std::move(slice))
@@ -372,7 +367,6 @@ public:
         , tombstone_limit(static_cast<uint64_t>(tombstone_limit))
         , read_timestamp(rt)
         , allow_limit(allow_limit)
-        , query_string(std::move(query_str))
     { }
 
 

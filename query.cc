@@ -65,7 +65,6 @@ std::ostream& operator<<(std::ostream& out, const read_command& r) {
         << ", query_uuid=" << r.query_uuid
         << ", is_first_page=" << r.is_first_page
         << ", read_timestamp=" << r.read_timestamp
-        << ", query_string=" << r.query_string
         << "}";
 }
 

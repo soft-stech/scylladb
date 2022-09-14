@@ -57,9 +57,8 @@ class querier_base {
 public:
     struct querier_config {
         uint32_t tombstone_warn_threshold {0}; // 0 disabled
-        sstring query_raw_string;
-        querier_config(uint32_t warn, const sstring& query_str)
-            : tombstone_warn_threshold(warn), query_raw_string(query_str) {}
+        querier_config(uint32_t warn)
+            : tombstone_warn_threshold(warn) {}
     };
 
 protected:
@@ -214,7 +213,7 @@ public:
                 auto live = cstats.static_rows.live + cstats.clustering_rows.live;
                 sstring keystr = current_range_to_string();
 
-                qrlogger.warn("Read {} live rows and {} tombstones for query {} {} (see tombstone_warn_threshold)", live, dead, (*_qr_config).query_raw_string, keystr);
+                qrlogger.warn("Read {} live rows and {} tombstones for query {} {} (see tombstone_warn_threshold)", live, dead, keystr);
             }
             return std::move(fut);
         });

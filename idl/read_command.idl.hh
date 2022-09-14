@@ -59,7 +59,6 @@ class read_command {
     std::optional<query::max_result_size> max_result_size [[version 4.3]] = std::nullopt;
     uint32_t row_limit_high_bits [[version 4.3]] = 0;
     uint64_t tombstone_limit [[version 5.2]] = query::max_tombstones;
-    sstring query_string [[version 5.2]];
 };
 
 }
