@@ -213,7 +213,7 @@ public:
                 auto live = cstats.static_rows.live + cstats.clustering_rows.live;
                 sstring keystr = current_range_to_string();
 
-                qrlogger.warn("Read {} live rows and {} tombstones for query {} {} (see tombstone_warn_threshold)", live, dead, keystr);
+                qrlogger.warn("Read {} live rows and {} tombstones for partition key \"{}\" (see tombstone_warn_threshold)", live, dead, keystr);
             }
             return std::move(fut);
         });
