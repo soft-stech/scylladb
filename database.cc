@@ -1133,6 +1133,7 @@ keyspace::make_column_family_config(const schema& s, const database& db) const {
     cfg.statement_scheduling_group = _config.statement_scheduling_group;
     cfg.enable_metrics_reporting = db_config.enable_keyspace_column_family_metrics();
     cfg.reversed_reads_auto_bypass_cache = db_config.reversed_reads_auto_bypass_cache;
+    cfg.tombstone_drop_cache_threshold = db_config.tombstone_drop_cache_threshold();
 
     // avoid self-reporting
     if (is_system_table(s)) {

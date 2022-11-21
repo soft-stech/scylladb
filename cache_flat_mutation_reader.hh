@@ -679,7 +679,7 @@ void cache_flat_mutation_reader::add_to_buffer(const partition_snapshot_row_curs
         if (_read_context.digest_requested()) {
             row.latest_row().cells().prepare_hash(*_schema, column_kind::regular_column);
         }
-        add_clustering_row_to_buffer(mutation_fragment(*_schema, _permit, row.row()));
+        add_clustering_row_to_buffer(mutation_fragment(*_schema, _permit, row.row(), true));
     } else {
         position_in_partition::less_compare less(*_schema);
         if (less(_lower_bound, row.position())) {

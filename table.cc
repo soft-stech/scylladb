@@ -1984,6 +1984,8 @@ struct query_state {
     }
 };
 
+logging::logger clogger("querier_check");
+
 future<lw_shared_ptr<query::result>>
 table::query(schema_ptr s,
         reader_permit permit,
@@ -2048,6 +2050,24 @@ table::query(schema_ptr s,
 
     if (!saved_querier || (querier_opt && !querier_opt->are_limits_reached() && !qs.builder.is_short_read())) {
         co_await querier_opt->close();
+
+        const auto& qstats = querier_opt->query_stats();
+        clogger.info("table '{}' - rows live {}, dead {}, cached live {}, dead {}, expired {}", schema()->cf_name(),
+            qstats.clustering_rows.live, qstats.clustering_rows.dead,
+            qstats.cached_clustering_rows.live, qstats.cached_clustering_rows.dead,
+            qstats.expired_tomb_rows );
+
+        if ( _config.tombstone_drop_cache_threshold > 0 && qstats.expired_tomb_rows > _config.tombstone_drop_cache_threshold ) {
+            schema_ptr sch = schema();
+
+            for (const auto& range : partition_ranges) {
+                const auto& range_key = range.start()->value().key()->with_schema(*sch);
+
+                clogger.info("table '{}' - dropping partition cache for key '{}'", schema()->cf_name(), range_key);
+                co_await _cache.invalidate(row_cache::external_updater([] {}), range);
+            }
+        }
+
         querier_opt = {};
     }
     if (saved_querier) {

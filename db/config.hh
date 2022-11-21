@@ -227,6 +227,7 @@ public:
     named_value<uint32_t> counter_cache_keys_to_save;
     named_value<uint32_t> tombstone_warn_threshold;
     named_value<uint32_t> tombstone_failure_threshold;
+    named_value<uint32_t> tombstone_drop_cache_threshold;
     named_value<uint32_t> range_request_timeout_in_ms;
     named_value<uint32_t> read_request_timeout_in_ms;
     named_value<uint32_t> counter_write_request_timeout_in_ms;

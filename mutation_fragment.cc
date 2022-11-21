@@ -92,35 +92,36 @@ std::ostream& operator<<(std::ostream& out, const position_range& range) {
 }
 
 mutation_fragment::mutation_fragment(const schema& s, reader_permit permit, static_row&& r)
-    : _kind(kind::static_row), _data(std::make_unique<data>(std::move(permit)))
+    : _kind(kind::static_row), _data(std::make_unique<data>(std::move(permit))), _from_cache(false)
 {
     new (&_data->_static_row) static_row(std::move(r));
     _data->_memory.reset(reader_resources::with_memory(calculate_memory_usage(s)));
 }
 
-mutation_fragment::mutation_fragment(const schema& s, reader_permit permit, clustering_row&& r)
-    : _kind(kind::clustering_row), _data(std::make_unique<data>(std::move(permit)))
+mutation_fragment::mutation_fragment(const schema& s, reader_permit permit, clustering_row&& r, bool from_cache)
+    : _kind(kind::clustering_row), _data(std::make_unique<data>(std::move(permit))), _from_cache(from_cache)
 {
     new (&_data->_clustering_row) clustering_row(std::move(r));
     _data->_memory.reset(reader_resources::with_memory(calculate_memory_usage(s)));
+    _data->_clustering_row.from_cache(_from_cache);
 }
 
 mutation_fragment::mutation_fragment(const schema& s, reader_permit permit, range_tombstone&& r)
-    : _kind(kind::range_tombstone), _data(std::make_unique<data>(std::move(permit)))
+    : _kind(kind::range_tombstone), _data(std::make_unique<data>(std::move(permit))), _from_cache(false)
 {
     new (&_data->_range_tombstone) range_tombstone(std::move(r));
     _data->_memory.reset(reader_resources::with_memory(calculate_memory_usage(s)));
 }
 
 mutation_fragment::mutation_fragment(const schema& s, reader_permit permit, partition_start&& r)
-        : _kind(kind::partition_start), _data(std::make_unique<data>(std::move(permit)))
+        : _kind(kind::partition_start), _data(std::make_unique<data>(std::move(permit))), _from_cache(false)
 {
     new (&_data->_partition_start) partition_start(std::move(r));
     _data->_memory.reset(reader_resources::with_memory(calculate_memory_usage(s)));
 }
 
 mutation_fragment::mutation_fragment(const schema& s, reader_permit permit, partition_end&& r)
-        : _kind(kind::partition_end), _data(std::make_unique<data>(std::move(permit)))
+        : _kind(kind::partition_end), _data(std::make_unique<data>(std::move(permit))), _from_cache(false)
 {
     new (&_data->_partition_end) partition_end(std::move(r));
     _data->_memory.reset(reader_resources::with_memory(calculate_memory_usage(s)));

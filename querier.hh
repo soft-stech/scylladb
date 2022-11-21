@@ -193,6 +193,7 @@ template <emit_only_live_rows OnlyLive>
 class querier : public querier_base {
     lw_shared_ptr<compact_for_query_state<OnlyLive>> _compaction_state;
     std::optional<clustering_key_prefix> _last_ckey;
+    compaction_stats _query_stats {};
 
 public:
     querier(const mutation_source& ms,
@@ -210,6 +211,10 @@ public:
         return  _compaction_state->are_limits_reached();
     }
 
+    const compaction_stats& query_stats() const {
+        return _query_stats;
+    }
+
     template <typename Consumer>
     requires CompactedFragmentsConsumer<Consumer>
     auto consume_page(Consumer&& consumer,
@@ -221,6 +226,13 @@ public:
                 partition_limit, query_time).then([this, trace_ptr = std::move(trace_ptr)] (auto&& results) {
             _last_ckey = std::get<std::optional<clustering_key>>(std::move(results));
             const auto& cstats = _compaction_state->stats();
+
+            _query_stats.clustering_rows.live += cstats.clustering_rows.live;
+            _query_stats.clustering_rows.dead += cstats.clustering_rows.dead;
+            _query_stats.cached_clustering_rows.live += cstats.cached_clustering_rows.live;
+            _query_stats.cached_clustering_rows.dead += cstats.cached_clustering_rows.dead;
+            _query_stats.expired_tomb_rows += cstats.expired_tomb_rows;
+
             tracing::trace(trace_ptr, "Page stats: {} partition(s), {} static row(s) ({} live, {} dead), {} clustering row(s) ({} live, {} dead) and {} range tombstone(s)",
                     cstats.partitions,
                     cstats.static_rows.total(),

@@ -45,6 +45,7 @@
 class clustering_row {
     clustering_key_prefix _ck;
     deletable_row _row;
+    bool _from_cache = false;
 public:
     explicit clustering_row(clustering_key_prefix ck) : _ck(std::move(ck)) { }
     clustering_row(clustering_key_prefix ck, row_tombstone t, row_marker marker, row cells)
@@ -57,6 +58,9 @@ public:
         : _ck(re.key()), _row(s, re.row()) { }
     clustering_row(rows_entry&& re)
         : _ck(std::move(re.key())), _row(std::move(re.row())) {}
+
+    void from_cache(bool val) { _from_cache = val; }
+    bool is_from_cache() const { return _from_cache; }
 
     clustering_key_prefix& key() { return _ck; }
     const clustering_key_prefix& key() const { return _ck; }
@@ -307,6 +311,7 @@ private:
 private:
     kind _kind;
     std::unique_ptr<data> _data;
+    bool _from_cache;
 
     mutation_fragment() = default;
     explicit operator bool() const noexcept { return bool(_data); }
@@ -321,25 +326,28 @@ public:
     mutation_fragment(clustering_row_tag_t, const schema& s, reader_permit permit, Args&&... args)
         : _kind(kind::clustering_row)
         , _data(std::make_unique<data>(std::move(permit)))
+        , _from_cache(false)
     {
         new (&_data->_clustering_row) clustering_row(std::forward<Args>(args)...);
         _data->_memory.reset(reader_resources::with_memory(calculate_memory_usage(s)));
+        _data->_clustering_row.from_cache(_from_cache);
     }
 
     mutation_fragment(const schema& s, reader_permit permit, static_row&& r);
-    mutation_fragment(const schema& s, reader_permit permit, clustering_row&& r);
+    mutation_fragment(const schema& s, reader_permit permit, clustering_row&& r, bool from_cache = false);
     mutation_fragment(const schema& s, reader_permit permit, range_tombstone&& r);
     mutation_fragment(const schema& s, reader_permit permit, partition_start&& r);
     mutation_fragment(const schema& s, reader_permit permit, partition_end&& r);
 
     mutation_fragment(const schema& s, reader_permit permit, const mutation_fragment& o)
-        : _kind(o._kind), _data(std::make_unique<data>(std::move(permit))) {
+        : _kind(o._kind), _data(std::make_unique<data>(std::move(permit))), _from_cache(false) {
         switch (_kind) {
             case kind::static_row:
                 new (&_data->_static_row) static_row(s, o._data->_static_row);
                 break;
             case kind::clustering_row:
                 new (&_data->_clustering_row) clustering_row(s, o._data->_clustering_row);
+                _data->_clustering_row.from_cache(_from_cache);
                 break;
             case kind::range_tombstone:
                 new (&_data->_range_tombstone) range_tombstone(o._data->_range_tombstone);
@@ -391,6 +399,14 @@ public:
     bool is_range_tombstone() const { return _kind == kind::range_tombstone; }
     bool is_partition_start() const { return _kind == kind::partition_start; }
     bool is_end_of_partition() const { return _kind == kind::partition_end; }
+    bool is_from_cache() const { return _from_cache; }
+    void from_cache(bool val) {
+        _from_cache = val;
+
+        if (is_clustering_row()) {
+            _data->_clustering_row.from_cache(_from_cache);
+        }
+    }
 
     void mutate_as_static_row(const schema& s, std::invocable<static_row&> auto&& fn) {
         fn(_data->_static_row);

@@ -140,6 +140,8 @@ struct compaction_stats {
     uint64_t partitions = 0;
     row_stats static_rows;
     row_stats clustering_rows;
+    row_stats cached_clustering_rows;
+    uint64_t expired_tomb_rows = 0;
     uint64_t range_tombstones = 0;
 };
 
@@ -355,6 +357,14 @@ public:
         is_live |= cr.cells().compact_and_expire(_schema, column_kind::regular_column, t, _query_time, _can_gc, _gc_before, cr.marker(),
                 _collector.get());
         _stats.clustering_rows += is_live;
+
+        if (cr.is_from_cache()) {
+            _stats.cached_clustering_rows += is_live;
+
+            if (!is_live && t.max_deletion_time() < _gc_before) {
+                _stats.expired_tomb_rows++;
+            }
+        }
 
         if constexpr (sstable_compaction()) {
             _collector->consume_clustering_row([this, &gc_consumer, t] (clustering_row&& cr_garbage) {
