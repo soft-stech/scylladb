@@ -14,6 +14,8 @@
 #include "tombstone_gc.hh"
 #include "full_position.hh"
 
+extern logging::logger mplog;
+
 static inline bool has_ck_selector(const query::clustering_row_ranges& ranges) {
     // Like PK range, an empty row range, should be considered an "exclude all" restriction
     return ranges.empty() || std::any_of(ranges.begin(), ranges.end(), [](auto& r) {
@@ -24,6 +26,17 @@ static inline bool has_ck_selector(const query::clustering_row_ranges& ranges) {
 enum class compact_for_sstables {
     no,
     yes,
+};
+
+struct compaction_context {
+    uint64_t dead_rows_limit;
+    std::vector<partition_key> partitions_to_drop_cache;
+
+    compaction_context(uint64_t limit = 0)
+    : dead_rows_limit(limit)
+    {};
+
+    void drop() {partitions_to_drop_cache.clear();};
 };
 
 template<typename T>
@@ -167,6 +180,10 @@ class compact_mutation_state {
     std::unique_ptr<mutation_compactor_garbage_collector> _collector;
 
     compaction_stats _stats;
+//    partition_key _dbg_active_pk;
+//    int _dbg_active_partitions;
+//    compaction_stats::row_stats _dbg_curr_stats;
+    uint64_t _partition_dead_rows;
 
     // Remember if we requested to stop mid-partition.
     stop_iteration _stop = stop_iteration::no;
@@ -296,9 +313,14 @@ public:
         static_assert(sstable_compaction(), "This constructor can only be used for sstable compaction.");
     }
 
+    uint64_t get_partition_dead_rows() {return _partition_dead_rows;};
+
     void consume_new_partition(const dht::decorated_key& dk) {
         _stop = stop_iteration::no;
         auto& pk = dk.key();
+        _partition_dead_rows = 0;
+        mplog.info("===>Start compaction of partition {}", pk);
+
         _dk = &dk;
         _return_static_content_on_partition_with_no_rows =
             _slice.options.contains(query::partition_slice::option::always_return_static_content) ||
@@ -397,6 +419,8 @@ public:
         is_live |= cr.cells().compact_and_expire(_schema, column_kind::regular_column, t, _query_time, _can_gc, gc_before, cr.marker(),
                 _collector.get());
         _stats.clustering_rows += is_live;
+        //mplog.info("===>compacting partotion {};", _dbg_active_pk);
+        _partition_dead_rows += !is_live;
 
         if constexpr (sstable_compaction()) {
             _collector->consume_clustering_row([this, &gc_consumer, t] (clustering_row&& cr_garbage) {
@@ -434,6 +458,8 @@ public:
     template <typename Consumer, typename GCConsumer>
     requires CompactedFragmentsConsumerV2<Consumer> && CompactedFragmentsConsumerV2<GCConsumer>
     stop_iteration consume_end_of_partition(Consumer& consumer, GCConsumer& gc_consumer) {
+        mplog.info("=====>End compaction of partition {}; dead rows: {}", _dk->key(), _partition_dead_rows);
+
         if (_effective_tombstone) {
             auto rtc = range_tombstone_change(position_in_partition::after_key(_last_pos), tombstone{});
             // do_consume() overwrites _effective_tombstone with {}, so save and restore it.
@@ -574,6 +600,7 @@ class compact_mutation_v2 {
     Consumer _consumer;
     // Garbage Collected Consumer
     GCConsumer _gc_consumer;
+    lw_shared_ptr<compaction_context> _context = nullptr; 
 
 public:
     // Can only be used for compact_for_sstables::no
@@ -602,6 +629,8 @@ public:
         , _gc_consumer(std::move(gc_consumer)) {
     }
 
+    void set_context(lw_shared_ptr<compaction_context> context){_context = context;}
+
     void consume_new_partition(const dht::decorated_key& dk) {
         _state->consume_new_partition(dk);
     }
@@ -623,6 +652,11 @@ public:
     }
 
     stop_iteration consume_end_of_partition() {
+        auto dead = _state->get_partition_dead_rows();
+        if(_context && _context->dead_rows_limit && _context->dead_rows_limit < dead) {
+            partition_key key = _state->current_partition()->key();
+            _context->partitions_to_drop_cache.push_back(key);    
+        }
         return _state->consume_end_of_partition(_consumer, _gc_consumer);
     }
 

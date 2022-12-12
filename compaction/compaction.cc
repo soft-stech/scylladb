@@ -455,6 +455,7 @@ protected:
     std::vector<shared_sstable> _new_unused_sstables;
     std::vector<shared_sstable> _all_new_sstables;
     lw_shared_ptr<sstable_set> _compacting;
+    lw_shared_ptr<compaction_context> _context;
     sstables::compaction_type _type;
     uint64_t _max_sstable_size;
     uint32_t _sstable_level;
@@ -638,6 +639,7 @@ private:
     }
 
     future<> setup() {
+        _context = compaction_context(100);
         auto ssts = make_lw_shared<sstables::sstable_set>(make_sstable_set_for_input());
         formatted_sstables_list formatted_msg;
         auto fully_expired = _table_s.fully_expired_sstables(_sstables, gc_clock::now());
@@ -713,6 +715,7 @@ private:
         if (!enable_garbage_collected_sstable_writer() && use_interposer_consumer()) {
             return consume_without_gc_writer(now);
         }
+//        std::shared_ptr<compaction_context> ctx = std::make_shared<compaction_context>(100);
         auto consumer = make_interposer_consumer([this, now] (flat_mutation_reader_v2 reader) mutable
         {
             return seastar::async([this, reader = std::move(reader), now] () mutable {
@@ -726,6 +729,8 @@ private:
                         get_compacted_fragments_writer(),
                         get_gc_compacted_fragments_writer());
 
+                    cfc.set_context(_context);
+
                     reader.consume_in_thread(std::move(cfc));
                     return;
                 }
@@ -735,6 +740,9 @@ private:
                     _table_s.get_tombstone_gc_state(),
                     get_compacted_fragments_writer(),
                     noop_compacted_fragments_consumer());
+
+                    cfc.set_context(_context);
+
                 reader.consume_in_thread(std::move(cfc));
             });
         });
@@ -758,6 +766,10 @@ protected:
                 .end_size = _end_size,
             },
         };
+
+        if(_context) {
+            ret.partitions_to_drop_cache = _context->partitions_to_drop_cache;
+        }
 
         auto ratio = double(_end_size) / double(_start_size);
         auto duration = std::chrono::duration<float>(ended_at - started_at);

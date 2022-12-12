@@ -108,6 +108,7 @@ struct compaction_stats {
 struct compaction_result {
     std::vector<sstables::shared_sstable> new_sstables;
     compaction_stats stats;
+    std::vector<partition_key> partitions_to_drop_cache;
 };
 
 // Compact a list of N sstables into M sstables.
