@@ -2057,17 +2057,6 @@ table::query(schema_ptr s,
             qstats.cached_clustering_rows.live, qstats.cached_clustering_rows.dead,
             qstats.expired_tomb_rows );
 
-        if ( _config.tombstone_drop_cache_threshold > 0 && qstats.expired_tomb_rows > _config.tombstone_drop_cache_threshold ) {
-            schema_ptr sch = schema();
-
-            for (const auto& range : partition_ranges) {
-                const auto& range_key = range.start()->value().key()->with_schema(*sch);
-
-                clogger.info("table '{}' - dropping partition cache for key '{}'", schema()->cf_name(), range_key);
-                co_await _cache.invalidate(row_cache::external_updater([] {}), range);
-            }
-        }
-
         querier_opt = {};
     }
     if (saved_querier) {

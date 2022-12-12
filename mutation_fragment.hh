@@ -347,7 +347,6 @@ public:
                 break;
             case kind::clustering_row:
                 new (&_data->_clustering_row) clustering_row(s, o._data->_clustering_row);
-                _data->_clustering_row.from_cache(_from_cache);
                 break;
             case kind::range_tombstone:
                 new (&_data->_range_tombstone) range_tombstone(o._data->_range_tombstone);
