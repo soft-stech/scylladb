@@ -41,6 +41,17 @@ enum class compact_for_sstables {
     yes,
 };
 
+struct compaction_context {
+    uint64_t dead_rows_limit;
+    std::vector<partition_key> partitions_to_drop_cache;
+
+    compaction_context(uint64_t limit = 0)
+    : dead_rows_limit(limit)
+    {};
+
+    void drop() {partitions_to_drop_cache.clear();};
+};
+
 template<typename T>
 concept CompactedFragmentsConsumer = requires(T obj, tombstone t, const dht::decorated_key& dk, static_row sr,
         clustering_row cr, range_tombstone rt, tombstone current_tombstone, row_tombstone current_row_tombstone, bool is_alive) {
@@ -177,6 +188,8 @@ class compact_mutation_state {
     std::unique_ptr<mutation_compactor_garbage_collector> _collector;
 
     compaction_stats _stats;
+    uint64_t _partition_dead_rows;
+
 private:
     static constexpr bool only_live() {
         return OnlyLive == emit_only_live_rows::yes;
@@ -271,9 +284,12 @@ public:
         static_assert(!only_live(), "SSTable compaction cannot be run with emit_only_live_rows::yes.");
     }
 
+    uint64_t get_partition_dead_rows() {return _partition_dead_rows;};
+
     void consume_new_partition(const dht::decorated_key& dk) {
         auto& pk = dk.key();
         _dk = &dk;
+        _partition_dead_rows = 0;
         _return_static_content_on_partition_with_no_rows =
             _slice.options.contains(query::partition_slice::option::always_return_static_content) ||
             !has_ck_selector(_slice.row_ranges(_schema, pk));
@@ -357,6 +373,7 @@ public:
         is_live |= cr.cells().compact_and_expire(_schema, column_kind::regular_column, t, _query_time, _can_gc, _gc_before, cr.marker(),
                 _collector.get());
         _stats.clustering_rows += is_live;
+        _partition_dead_rows += !is_live;
 
         if (cr.is_from_cache()) {
             _stats.cached_clustering_rows += is_live;
@@ -517,6 +534,7 @@ class compact_mutation {
     Consumer _consumer;
     // Garbage Collected Consumer
     GCConsumer _gc_consumer;
+    lw_shared_ptr<compaction_context> _context = nullptr; 
 
 public:
     compact_mutation(const schema& s, gc_clock::time_point query_time, const query::partition_slice& slice, uint64_t limit,
@@ -540,6 +558,8 @@ public:
         , _gc_consumer(std::move(gc_consumer)) {
     }
 
+    void set_context(lw_shared_ptr<compaction_context> context){_context = context;}
+
     void consume_new_partition(const dht::decorated_key& dk) {
         _state->consume_new_partition(dk);
     }
@@ -561,6 +581,12 @@ public:
     }
 
     stop_iteration consume_end_of_partition() {
+        auto dead = _state->get_partition_dead_rows();
+        if(_context && _context->dead_rows_limit && _context->dead_rows_limit < dead) {
+            partition_key key = _state->current_partition()->key();
+            _context->partitions_to_drop_cache.push_back(key);    
+        }
+
         return _state->consume_end_of_partition(_consumer, _gc_consumer);
     }
 

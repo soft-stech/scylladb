@@ -490,6 +490,7 @@ protected:
     std::vector<shared_sstable> _new_unused_sstables;
     std::vector<shared_sstable> _all_new_sstables;
     lw_shared_ptr<sstable_set> _compacting;
+    lw_shared_ptr<compaction_context> _context;
     sstables::compaction_type _type;
     uint64_t _max_sstable_size;
     uint32_t _sstable_level;
@@ -621,6 +622,7 @@ private:
     template <typename GCConsumer>
     requires CompactedFragmentsConsumer<GCConsumer>
     future<> setup(GCConsumer gc_consumer) {
+        _context = compaction_context(1000);
         auto ssts = make_lw_shared<sstables::sstable_set>(make_sstable_set_for_input());
         formatted_sstables_list formatted_msg;
         auto fully_expired = get_fully_expired_sstables(_cf, _sstables, gc_clock::now() - _schema->gc_grace_seconds());
@@ -680,6 +682,7 @@ private:
                                          max_purgeable_func(),
                                          get_compacting_sstable_writer(),
                                          std::move(gc_consumer));
+                cfc.set_context(_context);
 
                 reader.consume_in_thread(std::move(cfc));
             });
