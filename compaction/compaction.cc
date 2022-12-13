@@ -630,7 +630,8 @@ private:
     template <typename GCConsumer>
     requires CompactedFragmentsConsumer<GCConsumer>
     future<> setup(GCConsumer gc_consumer) {
-        _context = compaction_context(1000);
+        _context = make_lw_shared<compaction_context>(_cf.get_config().tombstone_drop_cache_threshold);
+        log_info("tombstone_drop_cache_threshold = {}", _context->dead_rows_limit);
         auto ssts = make_lw_shared<sstables::sstable_set>(make_sstable_set_for_input());
         formatted_sstables_list formatted_msg;
         auto fully_expired = get_fully_expired_sstables(_cf, _sstables, gc_clock::now() - _schema->gc_grace_seconds());
