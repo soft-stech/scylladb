@@ -594,7 +594,15 @@ protected:
 
     virtual compaction_completion_desc
     get_compaction_completion_desc(std::vector<shared_sstable> input_sstables, std::vector<shared_sstable> output_sstables) {
-        return compaction_completion_desc{std::move(input_sstables), std::move(output_sstables)};
+        dht::partition_range_vector partition_ranges;
+        for ( auto& pkey : _context->partitions_to_drop_cache ) {
+            log_info("partition '{}' added to compaction_completion_desc", pkey.with_schema(*schema()));
+
+            auto dk = dht::decorate_key(*schema(), pkey);
+            partition_ranges.emplace_back(dht::partition_range::make_singular(std::move(dk)));
+        }
+
+        return compaction_completion_desc{std::move(input_sstables), std::move(output_sstables), std::move(partition_ranges)};
     }
 
     // Tombstone expiration is enabled based on the presence of sstable set.
@@ -682,7 +690,7 @@ private:
                                          max_purgeable_func(),
                                          get_compacting_sstable_writer(),
                                          std::move(gc_consumer));
-                cfc.set_context(_context);
+                //cfc.set_context(_context);
 
                 reader.consume_in_thread(std::move(cfc));
             });

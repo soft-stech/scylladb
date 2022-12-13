@@ -1984,7 +1984,7 @@ struct query_state {
     }
 };
 
-logging::logger clogger("querier_check");
+logging::logger qlogger("querier_check");
 
 future<lw_shared_ptr<query::result>>
 table::query(schema_ptr s,
@@ -2052,7 +2052,7 @@ table::query(schema_ptr s,
         co_await querier_opt->close();
 
         const auto& qstats = querier_opt->query_stats();
-        clogger.info("table '{}' - rows live {}, dead {}, cached live {}, dead {}, expired {}", schema()->cf_name(),
+        qlogger.info("table '{}' - rows live {}, dead {}, cached live {}, dead {}, expired {}", schema()->cf_name(),
             qstats.clustering_rows.live, qstats.clustering_rows.dead,
             qstats.cached_clustering_rows.live, qstats.cached_clustering_rows.dead,
             qstats.expired_tomb_rows );
