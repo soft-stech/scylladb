@@ -690,7 +690,7 @@ private:
                 auto cfc = make_stable_flattened_mutations_consumer<compact_mutations>(*schema(), now,
                                          max_purgeable_func(),
                                          get_compacting_sstable_writer(),
-                                         std::move(gc_consumer));
+                                         std::move(gc_consumer), _context);
                 //cfc.set_context(_context);
 
                 reader.consume_in_thread(std::move(cfc));

@@ -542,27 +542,32 @@ class compact_mutation {
 
 public:
     compact_mutation(const schema& s, gc_clock::time_point query_time, const query::partition_slice& slice, uint64_t limit,
-              uint32_t partition_limit, Consumer consumer, GCConsumer gc_consumer = GCConsumer())
+              uint32_t partition_limit, Consumer consumer, GCConsumer gc_consumer = GCConsumer(),
+              lw_shared_ptr<compaction_context> context = nullptr)
         : _state(make_lw_shared<compact_mutation_state<OnlyLive, SSTableCompaction>>(s, query_time, slice, limit, partition_limit))
         , _consumer(std::move(consumer))
         , _gc_consumer(std::move(gc_consumer))
         , _schema(s) {
+            _context = context;
     }
 
     compact_mutation(const schema& s, gc_clock::time_point compaction_time,
-            std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable, Consumer consumer, GCConsumer gc_consumer = GCConsumer())
+            std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable, Consumer consumer, 
+            GCConsumer gc_consumer = GCConsumer(), lw_shared_ptr<compaction_context> context = nullptr)
         : _state(make_lw_shared<compact_mutation_state<OnlyLive, SSTableCompaction>>(s, compaction_time, get_max_purgeable))
         , _consumer(std::move(consumer))
         , _gc_consumer(std::move(gc_consumer))
         , _schema(s) {
+            _context = context;
     }
 
     compact_mutation(lw_shared_ptr<compact_mutation_state<OnlyLive, SSTableCompaction>> state, Consumer consumer,
-                     GCConsumer gc_consumer = GCConsumer())
+                     GCConsumer gc_consumer = GCConsumer(), lw_shared_ptr<compaction_context> context = nullptr)
         : _state(std::move(state))
         , _consumer(std::move(consumer))
         , _gc_consumer(std::move(gc_consumer))
         , _schema(_state->schema()) {
+            _context = context;
     }
 
     void set_context(lw_shared_ptr<compaction_context> context){_context = context;}
