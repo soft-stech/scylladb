@@ -594,6 +594,12 @@ public:
 
     stop_iteration consume_end_of_partition() {
         auto dead_rows_count = _state->get_partition_dead_rows();
+
+        if (_context) {
+            const auto pkey = _state->current_partition()->key();
+            qlogger.info("compaction - {} dead rows count for partition key '{}'", dead_rows_count, pkey.with_schema(_schema));
+        }
+
         if(_context && _context->dead_rows_limit && _context->dead_rows_limit < dead_rows_count) {
             const auto pkey = _state->current_partition()->key();
 
