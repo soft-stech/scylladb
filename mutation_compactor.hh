@@ -593,7 +593,7 @@ public:
     }
 
     stop_iteration consume_end_of_partition() {
-        auto dead_rows_count = _state->get_partition_dead_rows();
+        /*auto dead_rows_count = _state->get_partition_dead_rows();
 
         if (_context) {
             const auto pkey = _state->current_partition()->key();
@@ -607,7 +607,7 @@ public:
                 _schema.cf_name(), dead_rows_count, _context->dead_rows_limit, pkey.with_schema(_schema));
 
             _context->partitions_to_drop_cache.emplace_back(std::move(pkey));
-        }
+        }*/
 
         return _state->consume_end_of_partition(_consumer, _gc_consumer);
     }
