@@ -1124,6 +1124,7 @@ dht::partition_range_vector row_cache::get_partitions_tombstones_over_limit(int 
         int dead = 0;
         int live = 0;
         int rows = 0;
+        int expired = 0;
 
         if (!e.partition().version()) {
             continue;
@@ -1132,6 +1133,7 @@ dht::partition_range_vector row_cache::get_partitions_tombstones_over_limit(int 
         for (partition_version& pv : e.partition().versions_from_oldest()) {
             const auto& pt = pv.partition();
 
+            expired += pt.expired_row_count(*_schema, query_time);
             dead += pt.dead_row_count(*_schema, query_time);
             live += pt.live_row_count(*_schema, query_time);
             rows += pt.row_count();
@@ -1139,12 +1141,12 @@ dht::partition_range_vector row_cache::get_partitions_tombstones_over_limit(int 
 
         auto dkey = e.key();
 
-        clogger.info("table '{}' partition '{}' cached live {}, dead {}, rows {}",
-            _schema->cf_name(), dkey.key().with_schema(*_schema), live, dead, rows);
+        clogger.info("table '{}' partition '{}' cached live {}, dead {}, expired {}, all rows {}",
+            _schema->cf_name(), dkey.key().with_schema(*_schema), live, dead, expired, rows);
 
-        if (dead > tombstone_drop_cache_threshold) {
-            clogger.info("table '{}' partition with key '{}' exceeded dead rows limit {}/{}",
-                _schema->cf_name(), dkey.key().with_schema(*_schema), dead, tombstone_drop_cache_threshold);
+        if (expired > tombstone_drop_cache_threshold) {
+            clogger.info("table '{}' partition with key '{}' exceeded expired dead rows limit {}/{}",
+                _schema->cf_name(), dkey.key().with_schema(*_schema), expired, tombstone_drop_cache_threshold);
 
             ranges.emplace_back(dht::partition_range::make_singular(std::move(dkey)));
         }
