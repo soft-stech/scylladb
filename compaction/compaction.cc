@@ -594,13 +594,8 @@ protected:
 
     virtual compaction_completion_desc
     get_compaction_completion_desc(std::vector<shared_sstable> input_sstables, std::vector<shared_sstable> output_sstables) {
-        dht::partition_range_vector partition_ranges;
-        for ( auto& pkey : _context->partitions_to_drop_cache ) {
-            log_info("partition '{}' added to compaction_completion_desc", pkey.with_schema(*schema()));
-
-            auto dk = dht::decorate_key(*schema(), pkey);
-            partition_ranges.emplace_back(dht::partition_range::make_singular(std::move(dk)));
-        }
+        auto partition_ranges = _cf.get_row_cache().get_partitions_tombstones_over_limit(
+            _cf.get_config().tombstone_drop_cache_threshold, gc_clock::now());
 
         return compaction_completion_desc{std::move(input_sstables), std::move(output_sstables), std::move(partition_ranges)};
     }

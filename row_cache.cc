@@ -1116,6 +1116,43 @@ void row_cache::unlink_from_lru(const dht::decorated_key& dk) {
     });
 }
 
+dht::partition_range_vector row_cache::get_partitions_tombstones_over_limit(int tombstone_drop_cache_threshold,
+        gc_clock::time_point query_time) {
+    dht::partition_range_vector ranges;
+
+    for (auto& e : _partitions) {
+        int dead = 0;
+        int live = 0;
+        int rows = 0;
+
+        if (!e.partition().version()) {
+            continue;
+        }
+
+        for (partition_version& pv : e.partition().versions_from_oldest()) {
+            const auto& pt = pv.partition();
+
+            dead += pt.dead_row_count(*_schema, query_time);
+            live += pt.live_row_count(*_schema, query_time);
+            rows += pt.row_count();
+        }
+
+        auto dkey = e.key();
+
+        clogger.info("table '{}' partition '{}' cached live {}, dead {}, rows {}",
+            _schema->cf_name(), dkey.key().with_schema(*_schema), live, dead, rows);
+
+        if (dead > tombstone_drop_cache_threshold) {
+            clogger.info("table '{}' partition with key '{}' exceeded dead rows limit {}/{}",
+                _schema->cf_name(), dkey.key().with_schema(*_schema), dead, tombstone_drop_cache_threshold);
+
+            ranges.emplace_back(dht::partition_range::make_singular(std::move(dkey)));
+        }
+    }
+
+    return ranges;
+}
+
 void row_cache::invalidate_locked(const dht::decorated_key& dk) {
     auto pos = _partitions.lower_bound(dk, dht::ring_position_comparator(*_schema));
     if (pos == partitions_end() || !pos->key().equal(*_schema, dk)) {
