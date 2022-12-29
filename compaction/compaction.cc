@@ -490,7 +490,6 @@ protected:
     std::vector<shared_sstable> _new_unused_sstables;
     std::vector<shared_sstable> _all_new_sstables;
     lw_shared_ptr<sstable_set> _compacting;
-    lw_shared_ptr<compaction_context> _context;
     sstables::compaction_type _type;
     uint64_t _max_sstable_size;
     uint32_t _sstable_level;
@@ -625,8 +624,6 @@ private:
     template <typename GCConsumer>
     requires CompactedFragmentsConsumer<GCConsumer>
     future<> setup(GCConsumer gc_consumer) {
-        /*_context = make_lw_shared<compaction_context>(_cf.get_config().tombstone_drop_cache_threshold);
-        log_info("tombstone_drop_cache_threshold = {}", _context->dead_rows_limit);*/
         auto ssts = make_lw_shared<sstables::sstable_set>(make_sstable_set_for_input());
         formatted_sstables_list formatted_msg;
         auto fully_expired = get_fully_expired_sstables(_cf, _sstables, gc_clock::now() - _schema->gc_grace_seconds());
@@ -685,8 +682,7 @@ private:
                 auto cfc = make_stable_flattened_mutations_consumer<compact_mutations>(*schema(), now,
                                          max_purgeable_func(),
                                          get_compacting_sstable_writer(),
-                                         std::move(gc_consumer), _context);
-                //cfc.set_context(_context);
+                                         std::move(gc_consumer));
 
                 reader.consume_in_thread(std::move(cfc));
             });
