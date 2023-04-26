@@ -1381,6 +1381,21 @@ binary_operator prepare_binary_operator(binary_operator binop, data_dictionary::
         }
     }
 
+    // try to simplify an expression contained single-element tuples
+    auto left_tuple = as_if<tuple_constructor>(&prepared_lhs);
+    if (left_tuple  && left_tuple->elements.size() == 1 && binop.op == oper_t::EQ) {
+        auto rhs_const = as_if<constant>(&prepared_rhs);
+        if (rhs_const && rhs_const->type->without_reversed().is_tuple()) {
+            const tuple_type_impl* rhs_tuple =  dynamic_cast<const tuple_type_impl*>(&rhs_const->type->without_reversed());
+            if (rhs_tuple->size()==1) { // yes, we can simplify
+                std::vector<managed_bytes_opt> elements = get_tuple_elements(rhs_const->value, *(rhs_const->type));
+                auto the_type = rhs_tuple->type(0);    
+                prepared_lhs = left_tuple->elements[0];
+                prepared_rhs = constant(cql3::raw_value::make_value(elements[0]), rhs_tuple->type(0));
+            }
+        }
+    }
+
     return binary_operator(std::move(prepared_lhs), binop.op, std::move(prepared_rhs), binop.order);
 }
 
