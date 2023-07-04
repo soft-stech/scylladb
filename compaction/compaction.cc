@@ -54,6 +54,7 @@
 #include "readers/compacting.hh"
 #include "tombstone_gc.hh"
 #include "keys.hh"
+#include "replica/database.hh"
 
 namespace sstables {
 
@@ -145,25 +146,6 @@ std::string_view to_string(compaction_type_options::scrub::quarantine_mode quara
 
 std::ostream& operator<<(std::ostream& os, compaction_type_options::scrub::quarantine_mode quarantine_mode) {
     return os << to_string(quarantine_mode);
-}
-
-std::ostream& operator<<(std::ostream& os, pretty_printed_data_size data) {
-    static constexpr const char* suffixes[] = { " bytes", "kB", "MB", "GB", "TB", "PB" };
-
-    unsigned exp = 0;
-    while ((data._size >= 1000) && (exp < sizeof(suffixes))) {
-        exp++;
-        data._size /= 1000;
-    }
-
-    os << data._size << suffixes[exp];
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, pretty_printed_throughput tp) {
-    uint64_t throughput = tp._duration.count() > 0 ? tp._size / tp._duration.count() : 0;
-    os << pretty_printed_data_size(throughput) << "/s";
-    return os;
 }
 
 static api::timestamp_type get_max_purgeable_timestamp(const table_state& table_s, sstable_set::incremental_selector& selector,
@@ -478,6 +460,8 @@ protected:
     std::unordered_set<shared_sstable> _compacting_for_max_purgeable_func;
     // optional owned_ranges vector for cleanup;
     owned_ranges_ptr _owned_ranges = {};
+    // required for reshard compaction.
+    const dht::sharder* _sharder = nullptr;
     std::optional<dht::incremental_owned_ranges_checker> _owned_ranges_checker;
     // Garbage collected sstables that are sealed but were not added to SSTable set yet.
     std::vector<shared_sstable> _unused_garbage_collected_sstables;
@@ -507,6 +491,7 @@ protected:
         , _selector(_sstable_set ? _sstable_set->make_incremental_selector() : std::optional<sstable_set::incremental_selector>{})
         , _compacting_for_max_purgeable_func(std::unordered_set<shared_sstable>(_sstables.begin(), _sstables.end()))
         , _owned_ranges(std::move(descriptor.owned_ranges))
+        , _sharder(descriptor.sharder)
         , _owned_ranges_checker(_owned_ranges ? std::optional<dht::incremental_owned_ranges_checker>(*_owned_ranges) : std::nullopt)
     {
         for (auto& sst : _sstables) {
@@ -802,8 +787,8 @@ protected:
         // By the time being, using estimated key count.
         log_info("{} {} sstables to {}. {} to {} (~{}% of original) in {}ms = {}. ~{} total partitions merged to {}.",
                 report_finish_desc(),
-                _input_sstable_generations.size(), new_sstables_msg, pretty_printed_data_size(_start_size), pretty_printed_data_size(_end_size), int(ratio * 100),
-                std::chrono::duration_cast<std::chrono::milliseconds>(duration).count(), pretty_printed_throughput(_end_size, duration),
+                _input_sstable_generations.size(), new_sstables_msg, utils::pretty_printed_data_size(_start_size), utils::pretty_printed_data_size(_end_size), int(ratio * 100),
+                std::chrono::duration_cast<std::chrono::milliseconds>(duration).count(), utils::pretty_printed_throughput(_end_size, duration),
                 _cdata.total_partitions, _cdata.total_keys_written);
 
         return ret;
@@ -940,7 +925,7 @@ void compacted_fragments_writer::split_large_partition() {
         _c.log_debug("Closing active tombstone {} with {} for partition {}", _current_partition.current_emitted_tombstone, rtc, *_current_partition.dk);
         _compaction_writer->writer.consume(std::move(rtc));
     }
-    _c.log_debug("Splitting large partition {} in order to respect SSTable size limit of {}", *_current_partition.dk, pretty_printed_data_size(_c._max_sstable_size));
+    _c.log_debug("Splitting large partition {} in order to respect SSTable size limit of {}", *_current_partition.dk, utils::pretty_printed_data_size(_c._max_sstable_size));
     // Close partition in current writer, and open it again in a new writer.
     do_consume_end_of_partition();
     stop_current_writer();
@@ -1593,7 +1578,7 @@ public:
     }
 
     compaction_writer create_compaction_writer(const dht::decorated_key& dk) override {
-        auto shard = dht::shard_of(*_schema, dk.token());
+        auto shard = _sharder->shard_of(dk.token());
         auto sst = _sstable_creator(shard);
         setup_new_sstable(sst);
 

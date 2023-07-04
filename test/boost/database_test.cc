@@ -63,7 +63,8 @@ public:
 
 static future<> apply_mutation(sharded<replica::database>& sharded_db, table_id uuid, const mutation& m, bool do_flush = false,
         db::commitlog::force_sync fs = db::commitlog::force_sync::no, db::timeout_clock::time_point timeout = db::no_timeout) {
-    auto shard = m.shard_of();
+    auto& t = sharded_db.local().find_column_family(uuid);
+    auto shard = t.shard_of(m);
     return sharded_db.invoke_on(shard, [uuid, fm = freeze(m), do_flush, fs, timeout] (replica::database& db) {
         auto& t = db.find_column_family(uuid);
         return db.apply(t.schema(), fm, tracing::trace_state_ptr(), fs, timeout).then([do_flush, &t] {
@@ -72,16 +73,20 @@ static future<> apply_mutation(sharded<replica::database>& sharded_db, table_id 
     });
 }
 
+future<> do_with_cql_env_and_compaction_groups_cgs(unsigned cgs, std::function<void(cql_test_env&)> func, cql_test_config cfg = {}, thread_attributes thread_attr = {}) {
+    // clean the dir before running
+    if (cfg.db_config->data_file_directories.is_set()) {
+        co_await recursive_remove_directory(fs::path(cfg.db_config->data_file_directories()[0]));
+        co_await recursive_touch_directory(cfg.db_config->data_file_directories()[0]);
+    }
+    cfg.db_config->x_log2_compaction_groups(cgs);
+    co_await do_with_cql_env_thread(func, cfg, thread_attr);
+}
+
 future<> do_with_cql_env_and_compaction_groups(std::function<void(cql_test_env&)> func, cql_test_config cfg = {}, thread_attributes thread_attr = {}) {
     std::vector<unsigned> x_log2_compaction_group_values = { 0 /* 1 CG */, 1 /* 2 CGs */ };
     for (auto x_log2_compaction_groups : x_log2_compaction_group_values) {
-        // clean the dir before running
-        if (cfg.db_config->data_file_directories.is_set()) {
-            co_await recursive_remove_directory(fs::path(cfg.db_config->data_file_directories()[0]));
-            co_await recursive_touch_directory(cfg.db_config->data_file_directories()[0]);
-        }
-        cfg.db_config->x_log2_compaction_groups(x_log2_compaction_groups);
-        co_await do_with_cql_env_thread(func, cfg, thread_attr);
+        co_await do_with_cql_env_and_compaction_groups_cgs(x_log2_compaction_groups, func, cfg, thread_attr);
     }
 }
 
@@ -94,6 +99,7 @@ SEASTAR_TEST_CASE(test_safety_after_truncate) {
         sstring ks_name = "ks";
         sstring cf_name = "cf";
         auto s = db.find_schema(ks_name, cf_name);
+        auto&& table = db.find_column_family(s);
         auto uuid = s->id();
 
         std::vector<size_t> keys_per_shard;
@@ -104,7 +110,7 @@ SEASTAR_TEST_CASE(test_safety_after_truncate) {
             auto pkey = partition_key::from_single_value(*s, to_bytes(fmt::format("key{}", i)));
             mutation m(s, pkey);
             m.set_clustered_cell(clustering_key_prefix::make_empty(), "v", int32_t(42), {});
-            auto shard = m.shard_of();
+            auto shard = table.shard_of(m);
             keys_per_shard[shard]++;
             pranges_per_shard[shard].emplace_back(dht::partition_range::make_singular(dht::decorate_key(*s, std::move(pkey))));
             apply_mutation(e.db(), uuid, m).get();
@@ -187,6 +193,7 @@ SEASTAR_TEST_CASE(test_querying_with_limits) {
             e.execute_cql("create table ks.cf (k text, v int, primary key (k));").get();
             auto& db = e.local_db();
             auto s = db.find_schema("ks", "cf");
+            auto&& table = db.find_column_family(s);
             auto uuid = s->id();
             std::vector<size_t> keys_per_shard;
             std::vector<dht::partition_range_vector> pranges_per_shard;
@@ -197,7 +204,7 @@ SEASTAR_TEST_CASE(test_querying_with_limits) {
                 mutation m(s, pkey);
                 m.partition().apply(tombstone(api::timestamp_type(1), gc_clock::now()));
                 apply_mutation(e.db(), uuid, m).get();
-                auto shard = m.shard_of();
+                auto shard = table.shard_of(m);
                 pranges_per_shard[shard].emplace_back(dht::partition_range::make_singular(dht::decorate_key(*s, std::move(pkey))));
             }
             for (uint32_t i = 3 * smp::count; i <= 8 * smp::count; ++i) {
@@ -205,7 +212,7 @@ SEASTAR_TEST_CASE(test_querying_with_limits) {
                 mutation m(s, pkey);
                 m.set_clustered_cell(clustering_key_prefix::make_empty(), "v", int32_t(42), 1);
                 apply_mutation(e.db(), uuid, m).get();
-                auto shard = m.shard_of();
+                auto shard = table.shard_of(m);
                 keys_per_shard[shard]++;
                 pranges_per_shard[shard].emplace_back(dht::partition_range::make_singular(dht::decorate_key(*s, std::move(pkey))));
             }
@@ -249,8 +256,8 @@ SEASTAR_TEST_CASE(test_querying_with_limits) {
     });
 }
 
-static void test_database(void (*run_tests)(populate_fn_ex, bool)) {
-    do_with_cql_env_and_compaction_groups([run_tests] (cql_test_env& e) {
+static void test_database(void (*run_tests)(populate_fn_ex, bool), unsigned cgs) {
+    do_with_cql_env_and_compaction_groups_cgs(cgs, [run_tests] (cql_test_env& e) {
         run_tests([&] (schema_ptr s, const std::vector<mutation>& partitions, gc_clock::time_point) -> mutation_source {
             auto& mm = e.migration_manager().local();
             try {
@@ -284,12 +291,20 @@ static void test_database(void (*run_tests)(populate_fn_ex, bool)) {
     }).get();
 }
 
-SEASTAR_THREAD_TEST_CASE(test_database_with_data_in_sstables_is_a_mutation_source_plain) {
-    test_database(run_mutation_source_tests_plain);
+SEASTAR_THREAD_TEST_CASE(test_database_with_data_in_sstables_is_a_mutation_source_plain_cg0) {
+    test_database(run_mutation_source_tests_plain, 0);
 }
 
-SEASTAR_THREAD_TEST_CASE(test_database_with_data_in_sstables_is_a_mutation_source_reverse) {
-    test_database(run_mutation_source_tests_reverse);
+SEASTAR_THREAD_TEST_CASE(test_database_with_data_in_sstables_is_a_mutation_source_plain_cg1) {
+    test_database(run_mutation_source_tests_plain, 1);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_database_with_data_in_sstables_is_a_mutation_source_reverse_cg0) {
+    test_database(run_mutation_source_tests_reverse, 0);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_database_with_data_in_sstables_is_a_mutation_source_reverse_cg1) {
+    test_database(run_mutation_source_tests_reverse, 1);
 }
 
 static void require_exist(const sstring& filename, bool should) {
@@ -390,7 +405,9 @@ SEASTAR_THREAD_TEST_CASE(test_distributed_loader_with_pending_delete) {
     std::vector<sstables::generation_type> gen;
     constexpr size_t num_gens = 9;
     std::generate_n(std::back_inserter(gen), num_gens, [&] {
-        return gen_generator();
+        // we assumes the integer-based generation identifier in this test, so disable
+        // uuid_identifier here
+        return gen_generator(sstables::uuid_identifiers::no);
     });
 
     // Regular log file with single entry

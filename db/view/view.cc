@@ -32,6 +32,8 @@
 #include "cql3/statements/select_statement.hh"
 #include "cql3/util.hh"
 #include "cql3/restrictions/statement_restrictions.hh"
+#include "cql3/expr/expr-utils.hh"
+#include "cql3/expr/evaluate.hh"
 #include "db/view/view.hh"
 #include "db/view/view_builder.hh"
 #include "db/view/view_updating_consumer.hh"
@@ -291,9 +293,9 @@ bool partition_key_matches(data_dictionary::database db, const schema& base, con
     return cql3::expr::is_satisfied_by(
             pk_restrictions,
             cql3::expr::evaluation_inputs{
-                .partition_key = &exploded_pk,
-                .clustering_key = &exploded_ck,
-                .static_and_regular_columns = nullptr, // partition key filtering only
+                .partition_key = exploded_pk,
+                .clustering_key = exploded_ck,
+                .static_and_regular_columns = {}, // partition key filtering only
                 .selection = selection.get(),
                 .options = &dummy_options,
             });
@@ -315,9 +317,9 @@ bool clustering_prefix_matches(data_dictionary::database db, const schema& base,
     return cql3::expr::is_satisfied_by(
             r,
             cql3::expr::evaluation_inputs{
-                .partition_key = &exploded_pk,
-                .clustering_key = &exploded_ck,
-                .static_and_regular_columns = nullptr, // clustering key only filtering here
+                .partition_key = exploded_pk,
+                .clustering_key = exploded_ck,
+                .static_and_regular_columns = {}, // clustering key only filtering here
                 .selection = selection.get(),
                 .options = &dummy_options,
             });
@@ -394,9 +396,9 @@ public:
                 return cql3::expr::is_satisfied_by(
                         r,
                         cql3::expr::evaluation_inputs{
-                            .partition_key = &_pk,
-                            .clustering_key = &ck,
-                            .static_and_regular_columns = &static_and_regular_columns,
+                            .partition_key = _pk,
+                            .clustering_key = ck,
+                            .static_and_regular_columns = static_and_regular_columns,
                             .selection = _selection.get(),
                             .options = &dummy_options,
                         });

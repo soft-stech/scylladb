@@ -352,7 +352,8 @@ struct table_stats {
 
 using storage_options = data_dictionary::storage_options;
 
-class table : public enable_lw_shared_from_this<table> {
+class table : public enable_lw_shared_from_this<table>
+            , public weakly_referencable<table> {
 public:
     struct config {
         std::vector<sstring> all_datadirs;
@@ -569,7 +570,7 @@ private:
 
     // update the sstable generation, making sure (in calculate_generation_for_new_table)
     // that new new sstables don't overwrite this one.
-    void update_sstables_known_generation(std::optional<sstables::generation_type> generation);
+    void update_sstables_known_generation(sstables::generation_type generation);
 
     sstables::generation_type calculate_generation_for_new_table();
 private:
@@ -589,7 +590,8 @@ private:
                                         const query::partition_slice& slice,
                                         tracing::trace_state_ptr trace_state,
                                         streamed_mutation::forwarding fwd,
-                                        mutation_reader::forwarding fwd_mr) const;
+                                        mutation_reader::forwarding fwd_mr,
+                                        const sstables::sstable_predicate& = sstables::default_sstable_predicate()) const;
 
     lw_shared_ptr<sstables::sstable_set> make_maintenance_sstable_set() const;
     lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
@@ -666,9 +668,8 @@ public:
             tracing::trace_state_ptr trace_state = nullptr,
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
             mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes) const;
-    flat_mutation_reader_v2 make_reader_v2_excluding_sstables(schema_ptr schema,
+    flat_mutation_reader_v2 make_reader_v2_excluding_staging(schema_ptr schema,
             reader_permit permit,
-            std::vector<sstables::shared_sstable>& sst,
             const dht::partition_range& range,
             const query::partition_slice& slice,
             tracing::trace_state_ptr trace_state = nullptr,
@@ -705,7 +706,7 @@ public:
     sstables::shared_sstable make_streaming_staging_sstable();
 
     mutation_source as_mutation_source() const;
-    mutation_source as_mutation_source_excluding(std::vector<sstables::shared_sstable>& sst) const;
+    mutation_source as_mutation_source_excluding_staging() const;
 
     void set_virtual_reader(mutation_source virtual_reader) {
         _virtual_reader = std::move(virtual_reader);
@@ -771,6 +772,13 @@ public:
     future<const_mutation_partition_ptr> find_partition(schema_ptr, reader_permit permit, const dht::decorated_key& key) const;
     future<const_mutation_partition_ptr> find_partition_slow(schema_ptr, reader_permit permit, const partition_key& key) const;
     future<const_row_ptr> find_row(schema_ptr, reader_permit permit, const dht::decorated_key& partition_key, clustering_key clustering_key) const;
+    shard_id shard_of(const mutation& m) const {
+        return shard_of(m.token());
+    }
+    shard_id shard_of(dht::token t) const {
+        return _erm ? _erm->shard_of(*_schema, t)
+                    : dht::static_shard_of(*_schema, t); // for tests.
+    }
     // Applies given mutation to this column family
     // The mutation is always upgraded to current schema.
     void apply(const frozen_mutation& m, const schema_ptr& m_schema, db::rp_handle&& h = {}) {
@@ -836,7 +844,7 @@ public:
     // Start a compaction of all sstables in a process known as major compaction
     // Active memtable is flushed first to guarantee that data like tombstone,
     // sitting in the memtable, will be compacted with shadowed data.
-    future<> compact_all_sstables();
+    future<> compact_all_sstables(tasks::task_info info = {});
 
     future<bool> snapshot_exists(sstring name);
 
@@ -879,6 +887,10 @@ public:
 
     void set_incremental_backups(bool val) {
         _config.enable_incremental_backups = val;
+    }
+
+    bool uses_static_sharding() const {
+        return !_erm || _erm->get_replication_strategy().is_vnode_based();
     }
 
     /*!
@@ -1425,6 +1437,9 @@ private:
     void update_write_metrics_for_timed_out_write();
     future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::effective_replication_map_factory& erm_factory, system_keyspace system);
     void remove(table&) noexcept;
+    void drop_keyspace(const sstring& name);
+    future<> update_keyspace(sharded<service::storage_proxy>& proxy, const keyspace_metadata& tmp_ksm);
+    static future<> modify_keyspace_on_all_shards(sharded<database>& sharded_db, std::function<future<>(replica::database&)> func, std::function<future<>(replica::database&)> notifier);
 public:
     static table_schema_version empty_version;
 
@@ -1516,15 +1531,15 @@ public:
      *
      * @return ready future when the operation is complete
      */
-    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::effective_replication_map_factory& erm_factory);
+    static future<> create_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const keyspace_metadata& ksm);
     /* below, find_keyspace throws no_such_<type> on fail */
     keyspace& find_keyspace(std::string_view name);
     const keyspace& find_keyspace(std::string_view name) const;
     bool has_keyspace(std::string_view name) const;
     void validate_keyspace_update(keyspace_metadata& ksm);
     void validate_new_keyspace(keyspace_metadata& ksm);
-    future<> update_keyspace(sharded<service::storage_proxy>& proxy, const sstring& name);
-    void drop_keyspace(const sstring& name);
+    static future<> update_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const keyspace_metadata& ksm);
+    static future<> drop_keyspace_on_all_shards(sharded<database>& sharded_db, const sstring& name);
     std::vector<sstring> get_non_system_keyspaces() const;
     std::vector<sstring> get_user_keyspaces() const;
     std::vector<sstring> get_all_keyspaces() const;
@@ -1581,7 +1596,7 @@ public:
     // Apply mutations atomically.
     // On restart, either all mutations will be replayed or none of them.
     // All mutations must belong to the same commitlog domain.
-    // All mutations must be owned by the current shard (in terms of dht::shard_of).
+    // All mutations must be owned by the current shard.
     // Mutations may be partially visible to reads during the call.
     // Mutations may be partially visible to reads until restart on exception (FIXME).
     future<> apply(const std::vector<frozen_mutation>&, db::timeout_clock::time_point timeout);

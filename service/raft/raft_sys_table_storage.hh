@@ -51,6 +51,8 @@ class raft_sys_table_storage : public raft::persistence {
     // this helper.
     future<> _pending_op_fut;
 
+    const size_t _max_mutation_size;
+
 public:
     explicit raft_sys_table_storage(cql3::query_processor& qp, raft::group_id gid, raft::server_id server_id);
 
@@ -71,11 +73,17 @@ public:
 
     // Persist initial configuration of a new Raft group.
     // To be called before start for the new group.
-    // Uses a special snapshot id (0) to identify the snapshot
-    // descriptor.
-    future<> bootstrap(raft::configuration initial_configuation);
+    //
+    // If `nontrivial_snapshot` is true, the initial snapshot will have index 1 instead of 0,
+    // which will trigger a snapshot transfer to servers which start with snapshot index 0.
+    // This should be set for the first group 0 server during upgrade or recovery, which
+    // will force snapshot transfers for subsequently joining nodes (so we can transfer initial
+    // schema etc.). It's also correct to do it when booting a cluster from
+    // scratch with Raft, although not necessary (it will force an empty snapshot transfer).
+    future<> bootstrap(raft::configuration initial_configuation, bool nontrivial_snapshot);
 private:
 
+    future<size_t> do_store_log_entries_one_batch(const std::vector<raft::log_entry_ptr>& entries, size_t start_idx);
     future<> do_store_log_entries(const std::vector<raft::log_entry_ptr>& entries);
     // Truncate all entries from the persisted log with indices <= idx
     // Called from the `store_snapshot` function.

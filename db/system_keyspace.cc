@@ -2026,7 +2026,12 @@ public:
         };
 
         auto keyspace_names = boost::copy_range<std::vector<decorated_keyspace_name>>(
-                _db.get_keyspaces() | boost::adaptors::transformed([this] (auto&& e) {
+            _db.get_keyspaces()
+                | boost::adaptors::filtered([] (auto&& e) {
+                      auto&& rs = e.second.get_replication_strategy();
+                      return rs.is_vnode_based();
+                  })
+                | boost::adaptors::transformed([this] (auto&& e) {
                     return decorated_keyspace_name{e.first, make_partition_key(e.first)};
         }));
 
@@ -3580,7 +3585,7 @@ future<service::topology> system_keyspace::load_topology_state() {
             map = &ret.new_nodes;
         } else {
             map = &ret.transition_nodes;
-            if (!ring_slice) {
+            if (nstate != service::node_state::left_token_ring && !ring_slice) {
                 on_fatal_internal_error(slogger, format(
                     "load_topology_state: node {} in transitioning state but missing ring slice", host_id));
             }
@@ -3602,9 +3607,15 @@ future<service::topology> system_keyspace::load_topology_state() {
 
         if (some_row.has("transition_state")) {
             ret.tstate = service::transition_state_from_string(some_row.get_as<sstring>("transition_state"));
-        } else if (!ret.transition_nodes.empty()) {
-            on_internal_error(slogger,
-                "load_topology_state: topology not in transition state but transition nodes are present");
+        } else {
+            // Any remaining transition_nodes must be in left_token_ring state
+            auto it = std::find_if(ret.transition_nodes.begin(), ret.transition_nodes.end(),
+                    [] (auto& p) { return p.second.state != service::node_state::left_token_ring; });
+            if (it != ret.transition_nodes.end()) {
+                on_internal_error(slogger, format(
+                    "load_topology_state: topology not in transition state"
+                    " but transition node {} in state {} is present", it->first, it->second.state));
+            }
         }
 
         if (some_row.has("new_cdc_generation_data_uuid")) {
@@ -3748,7 +3759,7 @@ future<> system_keyspace::sstables_registry_list(sstring location, sstable_regis
     co_await _qp.query_internal(req, db::consistency_level::ONE, { location }, 1000, [ consumer = std::move(consumer) ] (const cql3::untyped_result_set::row& row) -> future<stop_iteration> {
         auto uuid = row.get_as<utils::UUID>("uuid");
         auto status = row.get_as<sstring>("status");
-        auto gen = sstables::generation_type::from_uuid(row.get_as<utils::UUID>("generation"));
+        auto gen = sstables::generation_type(row.get_as<utils::UUID>("generation"));
         auto ver = sstables::version_from_string(row.get_as<sstring>("version"));
         auto fmt = sstables::format_from_string(row.get_as<sstring>("format"));
         sstables::entry_descriptor desc("", "", "", gen, ver, fmt, sstables::component_type::TOC);

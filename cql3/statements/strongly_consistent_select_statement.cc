@@ -15,6 +15,7 @@
 #include <seastar/core/on_internal_error.hh>
 
 #include "cql3/restrictions/statement_restrictions.hh"
+#include "cql3/expr/evaluate.hh"
 #include "cql3/query_processor.hh"
 #include "service/broadcast_tables/experimental/lang.hh"
 #include "db/system_keyspace.hh"
@@ -101,7 +102,7 @@ strongly_consistent_select_statement::execute_without_checking_exception_message
     auto result = co_await qp.execute_broadcast_table_query(
         { evaluate_prepared(_query, options) }
     );
-    
+
     auto query_result = std::get_if<service::broadcast_tables::query_result_select>(&result);
 
     if (!query_result) {

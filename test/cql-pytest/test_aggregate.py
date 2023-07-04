@@ -18,6 +18,11 @@ def table1(cql, test_keyspace):
     with new_test_table(cql, test_keyspace, "p int, c int, v int, d double, dc decimal, PRIMARY KEY (p, c)") as table:
         yield table
 
+@pytest.fixture(scope="module")
+def table2(cql, test_keyspace):
+    with new_test_table(cql, test_keyspace, 'p int, c int, somecolumn int, "SomeColumn" int, "OtherColumn" int, PRIMARY KEY (p, c)') as table:
+        yield table
+
 # When there is no row matching the selection, the count should be 0.
 # First check a "=" expression matching no row:
 def test_count_empty_eq(cql, table1):
@@ -119,12 +124,12 @@ def test_count_and_group_by_partition(cql, table1):
 # In the above tests we looked for per-row or per-partition counts and got
 # back more than one count. But if our query matches no row, we should get
 # back no count.
-@pytest.mark.xfail(reason="issue #12477")
+#
+# Reproduces #12477
 def test_count_and_group_by_row_none(cql, table1):
     p = unique_key_int()
     assert [] == list(cql.execute(f"select p, c, count(v) from {table1} where p = {p} group by p,c"))
 
-@pytest.mark.xfail(reason="issue #12477")
 def test_count_and_group_by_partition_none(cql, table1):
     p = unique_key_int()
     assert [] == list(cql.execute(f"select p, count(v) from {table1} where p = {p} group by p"))
@@ -217,3 +222,22 @@ def test_avg_decimal_2(cql, table1, cassandra_bug):
 def test_reject_aggregates_in_where_clause(cql, table1):
     assert_invalid_message(cql, table1, 'Aggregation',
                            f'SELECT * FROM {table1} WHERE p = sum((int)4)')
+
+# Reproduces #13265
+# Aggregates must handle case-sensitive column names correctly.
+def test_sum_case_sensitive_column(cql, table2):
+    p = unique_key_int()
+    cql.execute(f'insert into {table2} (p, c, somecolumn, "SomeColumn", "OtherColumn") VALUES ({p}, 1, 1, 10, 100)')
+    cql.execute(f'insert into {table2} (p, c, somecolumn, "SomeColumn", "OtherColumn") VALUES ({p}, 2, 2, 20, 200)')
+    cql.execute(f'insert into {table2} (p, c, somecolumn, "SomeColumn", "OtherColumn") VALUES ({p}, 3, 3, 30, 300)')
+
+    assert cql.execute(f'select sum(somecolumn) from {table2} where p = {p}').one()[0] == 6
+    assert cql.execute(f'select sum("somecolumn") from {table2} where p = {p}').one()[0] == 6
+    assert cql.execute(f'select sum("SomeColumn") from {table2} where p = {p}').one()[0] == 60
+    assert cql.execute(f'select sum(SomeColumn) from {table2} where p = {p}').one()[0] == 6
+    assert cql.execute(f'select sum("OtherColumn") from {table2} where p = {p}').one()[0] == 600
+
+    assert_invalid_message(cql, table2, 'someColumn',
+                           f'select sum("someColumn") from {table2} where p = {p}')
+    assert_invalid_message(cql, table2, 'othercolumn',
+                           f'select sum(OtherColumn) from {table2} where p = {p}')

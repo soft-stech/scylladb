@@ -11,6 +11,8 @@
 #include "cql3/update_parameters.hh"
 #include "cql3/selection/selection.hh"
 #include "cql3/expr/expression.hh"
+#include "cql3/expr/evaluate.hh"
+#include "cql3/expr/expr-utils.hh"
 #include "query-result-reader.hh"
 #include "types/map.hh"
 
@@ -29,9 +31,9 @@ update_parameters::get_prefetched_list(const partition_key& pkey, const clusteri
     auto ckey_bytes = ckey.explode();
 
     auto val = expr::extract_column_value(&column, expr::evaluation_inputs{
-        .partition_key = &pkey_bytes,
-        .clustering_key = &ckey_bytes,
-        .static_and_regular_columns = &row->cells,
+        .partition_key = pkey_bytes,
+        .clustering_key = ckey_bytes,
+        .static_and_regular_columns = row->cells,
         .selection = _prefetched.selection.get(),
     });
 

@@ -14,6 +14,8 @@
 #include "cql3/statements/strongly_consistent_modification_statement.hh"
 #include "cql3/statements/raw/modification_statement.hh"
 #include "cql3/statements/prepared_statement.hh"
+#include "cql3/expr/expr-utils.hh"
+#include "cql3/expr/evaluate.hh"
 #include "cql3/util.hh"
 #include "validation.hh"
 #include "db/consistency_level_validations.hh"
@@ -102,11 +104,10 @@ std::optional<gc_clock::duration> modification_statement::get_time_to_live(const
 }
 
 future<> modification_statement::check_access(query_processor& qp, const service::client_state& state) const {
-    const data_dictionary::database db = qp.db();
-    auto f = state.has_column_family_access(db, keyspace(), column_family(), auth::permission::MODIFY);
+    auto f = state.has_column_family_access(keyspace(), column_family(), auth::permission::MODIFY);
     if (has_conditions()) {
-        f = f.then([this, &state, db] {
-           return state.has_column_family_access(db, keyspace(), column_family(), auth::permission::SELECT);
+        f = f.then([this, &state] {
+           return state.has_column_family_access(keyspace(), column_family(), auth::permission::SELECT);
         });
     }
     return f;
@@ -184,7 +185,7 @@ bool modification_statement::applies_to(const selection::selection* selection,
     });
 
     auto inputs = expr::evaluation_inputs{
-        .static_and_regular_columns = static_and_regular_columns,
+        .static_and_regular_columns = *static_and_regular_columns,
         .selection = selection,
         .options = &options,
     };
@@ -262,6 +263,8 @@ modification_statement::execute_without_checking_exception_message(query_process
 
 future<::shared_ptr<cql_transport::messages::result_message>>
 modification_statement::do_execute(query_processor& qp, service::query_state& qs, const query_options& options) const {
+    (void)validation::validate_column_family(qp.db(), keyspace(), column_family());
+
     tracing::add_table_name(qs.get_trace_state(), keyspace(), column_family());
 
     inc_cql_stats(qs.get_client_state().is_internal());
@@ -313,6 +316,10 @@ modification_statement::execute_with_condition(query_processor& qp, service::que
 
     if (keys.empty()) {
         throw exceptions::invalid_request_exception(format("Unrestricted partition key in a conditional {}",
+                    type.is_update() ? "update" : "deletion"));
+    }
+    if (ranges.empty()) {
+        throw exceptions::invalid_request_exception(format("Unrestricted clustering key in a conditional {}",
                     type.is_update() ? "update" : "deletion"));
     }
 

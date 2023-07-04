@@ -2114,7 +2114,7 @@ SEASTAR_TEST_CASE(sstable_scrub_validate_mode_test) {
                 }
             });
 
-            sst->load().get();
+            sst->load(sst->get_schema()->get_sharder()).get();
 
             testlog.info("Loaded sstable {}", sst->get_filename());
 
@@ -2214,7 +2214,7 @@ SEASTAR_TEST_CASE(sstable_validate_test) {
         config.validation_level = mutation_fragment_stream_validation_level::partition_region; // this test violates key order on purpose
         auto sst = env.make_sstable(schema);
         sst->write_components(std::move(rd), local_keys.size(), schema, config, encoding_stats{}).get();
-        sst->load().get();
+        sst->load(sst->get_schema()->get_sharder()).get();
         return sst;
     };
 
@@ -2308,7 +2308,7 @@ SEASTAR_TEST_CASE(sstable_scrub_skip_mode_test) {
 
             testlog.info("Writing sstable {}", sst->get_filename());
 
-            sst->load().get();
+            sst->load(sst->get_schema()->get_sharder()).get();
 
             testlog.info("Loaded sstable {}", sst->get_filename());
 
@@ -2399,7 +2399,7 @@ SEASTAR_TEST_CASE(sstable_scrub_segregate_mode_test) {
                 }
             });
 
-            sst->load().get();
+            sst->load(sst->get_schema()->get_sharder()).get();
 
             testlog.info("Loaded sstable {}", sst->get_filename());
 
@@ -2505,7 +2505,7 @@ SEASTAR_TEST_CASE(sstable_scrub_quarantine_mode_test) {
                     }
                 });
 
-                sst->load().get();
+                sst->load(sst->get_schema()->get_sharder()).get();
 
                 testlog.info("Loaded sstable {}", sst->get_filename());
 
@@ -4518,7 +4518,7 @@ SEASTAR_TEST_CASE(simple_backlog_controller_test) {
             auto backlog_before = t.as_table_state().get_backlog_tracker().backlog();
             t->add_sstable_and_update_cache(sst).get();
             testlog.debug("\tNew sstable of size={} level={}; Backlog diff={};",
-                          sstables::pretty_printed_data_size(data_size), level,
+                          utils::pretty_printed_data_size(data_size), level,
                           t.as_table_state().get_backlog_tracker().backlog() - backlog_before);
         };
 
@@ -4556,7 +4556,7 @@ SEASTAR_TEST_CASE(simple_backlog_controller_test) {
         for (auto target_table_count : target_table_count_s) {
             const uint64_t per_table_max_disk_usage = std::ceil(all_tables_disk_usage / target_table_count);
 
-            testlog.info("Creating tables, with max size={}", sstables::pretty_printed_data_size(per_table_max_disk_usage));
+            testlog.info("Creating tables, with max size={}", utils::pretty_printed_data_size(per_table_max_disk_usage));
 
             std::vector<table_for_tests> tables;
             uint64_t tables_total_size = 0;
@@ -4577,18 +4577,18 @@ SEASTAR_TEST_CASE(simple_backlog_controller_test) {
                 }
 
                 auto table_size = t->get_stats().live_disk_space_used;
-                testlog.debug("T{}: {} tiers, with total size={}", t_idx, tiers, sstables::pretty_printed_data_size(table_size));
+                testlog.debug("T{}: {} tiers, with total size={}", t_idx, tiers, utils::pretty_printed_data_size(table_size));
                 tables.push_back(t);
                 tables_total_size += table_size;
             }
-            testlog.debug("Created {} tables, with total size={}", tables.size(), sstables::pretty_printed_data_size(tables_total_size));
+            testlog.debug("Created {} tables, with total size={}", tables.size(), utils::pretty_printed_data_size(tables_total_size));
             results.push_back(result{ tables.size(), per_table_max_disk_usage, normalize_backlog(manager.backlog()) });
             for (auto& t : tables) {
                 t.stop().get();
             }
         }
         for (auto& r : results) {
-            testlog.info("Tables={} with max size={} -> NormalizedBacklog={}", r.table_count, sstables::pretty_printed_data_size(r.per_table_max_disk_usage), r.normalized_backlog);
+            testlog.info("Tables={} with max size={} -> NormalizedBacklog={}", r.table_count, utils::pretty_printed_data_size(r.per_table_max_disk_usage), r.normalized_backlog);
             // Expect 0 backlog as tiers are all perfectly compacted
             // With LCS, the size of levels *set up by the test* can slightly exceed their target size,
             // so let's account for the microscopical amount of backlog returned.

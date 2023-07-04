@@ -34,6 +34,7 @@
 #include "test/lib/log.hh"
 #include "test/lib/reader_concurrency_semaphore.hh"
 #include "test/lib/random_utils.hh"
+#include "utils/throttle.hh"
 
 #include <boost/range/algorithm/min_element.hpp>
 #include "readers/from_mutations_v2.hh"
@@ -1230,62 +1231,16 @@ SEASTAR_TEST_CASE(test_update_failure) {
 }
 #endif
 
-class throttle {
-    unsigned _block_counter = 0;
-    promise<> _p; // valid when _block_counter != 0, resolves when goes down to 0
-    std::optional<promise<>> _entered;
-    bool _one_shot;
-public:
-    // one_shot means whether only the first enter() after block() will block.
-    throttle(bool one_shot = false) : _one_shot(one_shot) {}
-    future<> enter() {
-        if (_block_counter && (!_one_shot || _entered)) {
-            promise<> p1;
-            promise<> p2;
-
-            auto f1 = p1.get_future();
-
-            // Intentional, the future is waited on indirectly.
-            (void)p2.get_future().then([p1 = std::move(p1), p3 = std::move(_p)] () mutable {
-                p1.set_value();
-                p3.set_value();
-            });
-            _p = std::move(p2);
-            if (_entered) {
-                _entered->set_value();
-                _entered.reset();
-            }
-            return f1;
-        } else {
-            return make_ready_future<>();
-        }
-    }
-
-    future<> block() {
-        ++_block_counter;
-        _p = promise<>();
-        _entered = promise<>();
-        return _entered->get_future();
-    }
-
-    void unblock() {
-        assert(_block_counter);
-        if (--_block_counter == 0) {
-            _p.set_value();
-        }
-    }
-};
-
 class throttled_mutation_source {
 private:
     class impl : public enable_lw_shared_from_this<impl> {
         mutation_source _underlying;
-        ::throttle& _throttle;
+        utils::throttle& _throttle;
     private:
         class reader : public delegating_reader_v2 {
-            throttle& _throttle;
+            utils::throttle& _throttle;
         public:
-            reader(throttle& t, flat_mutation_reader_v2 r)
+            reader(utils::throttle& t, flat_mutation_reader_v2 r)
                     : delegating_reader_v2(std::move(r))
                     , _throttle(t)
             {}
@@ -1296,7 +1251,7 @@ private:
             }
         };
     public:
-        impl(::throttle& t, mutation_source underlying)
+        impl(utils::throttle& t, mutation_source underlying)
             : _underlying(std::move(underlying))
             , _throttle(t)
         { }
@@ -1308,7 +1263,7 @@ private:
     };
     lw_shared_ptr<impl> _impl;
 public:
-    throttled_mutation_source(throttle& t, mutation_source underlying)
+    throttled_mutation_source(utils::throttle& t, mutation_source underlying)
         : _impl(make_lw_shared<impl>(t, std::move(underlying)))
     { }
 
@@ -1388,7 +1343,7 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
         auto s = make_schema();
         tests::reader_concurrency_semaphore_wrapper semaphore;
         memtable_snapshot_source memtables(s);
-        throttle thr;
+        utils::throttle thr;
         auto cache_source = make_decorated_snapshot_source(snapshot_source([&] { return memtables(); }), [&] (mutation_source src) {
             return throttled_mutation_source(thr, std::move(src));
         });
@@ -1527,7 +1482,7 @@ SEASTAR_TEST_CASE(test_cache_population_and_clear_race) {
         auto s = make_schema();
         tests::reader_concurrency_semaphore_wrapper semaphore;
         memtable_snapshot_source memtables(s);
-        throttle thr;
+        utils::throttle thr;
         auto cache_source = make_decorated_snapshot_source(snapshot_source([&] { return memtables(); }), [&] (mutation_source src) {
             return throttled_mutation_source(thr, std::move(src));
         });
@@ -4268,7 +4223,7 @@ SEASTAR_TEST_CASE(test_eviction_of_upper_bound_of_population_range) {
         cache_mt->apply(m1);
 
         cache_tracker tracker;
-        throttle thr(true);
+        utils::throttle thr(true);
         auto cache_source = make_decorated_snapshot_source(snapshot_source([&] { return cache_mt->as_data_source(); }),
                                                            [&] (mutation_source src) {
             return throttled_mutation_source(thr, std::move(src));
@@ -4587,4 +4542,60 @@ SEASTAR_THREAD_TEST_CASE(test_digest_read_during_schema_upgrade) {
     auto m2 = m1;
     m2.upgrade(s2);
     assert_that(std::move(rd)).produces(m2);
+}
+
+SEASTAR_TEST_CASE(test_cache_compacts_expired_tombstones_on_read) {
+    return seastar::async([] {
+        auto s = schema_builder("ks", "cf")
+            .with_column("pk", int32_type, column_kind::partition_key)
+            .with_column("ck", int32_type, column_kind::clustering_key)
+            .with_column("v", int32_type)
+            .build();
+
+        tests::reader_concurrency_semaphore_wrapper semaphore;
+        auto pkey = tests::generate_partition_key(s);
+
+        auto make_ck = [&s] (int v) {
+            return clustering_key::from_deeply_exploded(*s, {data_value{v}});
+        };
+
+        auto make_prefix = [&s] (int v) {
+            return clustering_key_prefix::from_deeply_exploded(*s, {data_value{v}});
+        };
+
+        auto ck1 = make_ck(1);
+        auto ck2 = make_ck(2);
+        auto ck3 = make_ck(3);
+        auto dt_noexp = gc_clock::now();
+        auto dt_exp = gc_clock::now() - std::chrono::seconds(s->gc_grace_seconds().count() + 1);
+
+        auto mt = make_lw_shared<replica::memtable>(s);
+        cache_tracker tracker;
+        row_cache cache(s, snapshot_source_from_snapshot(mt->as_data_source()), tracker);
+
+        {
+            mutation m(s, pkey);
+            m.set_clustered_cell(ck1, "v", data_value(101), 1);
+            m.partition().apply_delete(*s, make_prefix(2), tombstone(1, dt_noexp)); // create non-expired tombstone
+            m.partition().apply_delete(*s, make_prefix(3), tombstone(2, dt_exp)); // create expired tombstone
+            cache.populate(m);
+        }
+
+        tombstone_gc_state gc_state(nullptr);
+        auto rd1 = cache.make_reader(s, semaphore.make_permit(), query::full_partition_range, &gc_state);
+        auto close_rd = deferred_close(rd1);
+        rd1.fill_buffer().get(); // cache_flat_mutation_reader compacts cache on fill buffer
+
+        cache_entry& entry = cache.lookup(pkey);
+        auto& cp = entry.partition().version()->partition();
+
+        BOOST_REQUIRE(cp.find_row(*s, ck1) != nullptr); // live row is in cache
+        BOOST_REQUIRE_EQUAL(cp.clustered_row(*s, ck2).deleted_at(), row_tombstone(tombstone(1, dt_noexp))); // non-expired tombstone is in cache
+        BOOST_REQUIRE(cp.find_row(*s, ck3) == nullptr); // expired tombstone isn't in cache
+
+        // check tracker stats
+        auto &tracker_stats = tracker.get_stats();
+        BOOST_REQUIRE(tracker_stats.rows_compacted == 1);
+        BOOST_REQUIRE(tracker_stats.rows_compacted_away == 1);
+    });
 }

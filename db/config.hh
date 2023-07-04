@@ -356,6 +356,7 @@ public:
     named_value<bool> enable_sstables_mc_format;
     named_value<bool> enable_sstables_md_format;
     named_value<sstring> sstable_format;
+    named_value<bool> uuid_sstable_identifiers_enabled;
     named_value<bool> enable_dangerous_direct_import_of_cassandra_counters;
     named_value<bool> enable_shard_aware_drivers;
     named_value<bool> enable_ipv6_dns_lookup;
@@ -439,6 +440,12 @@ public:
     static constexpr size_t wasm_udf_reserved_memory = 50 * 1024 * 1024;
 
     named_value<unsigned> minimum_keyspace_rf;
+
+    // authenticator options
+    named_value<std::string> auth_superuser_name;
+    named_value<std::string> auth_superuser_salted_password;
+
+    named_value<std::vector<std::unordered_map<sstring, sstring>>> auth_certificate_role_queries;
 
     seastar::logging_settings logging_settings(const log_cli::options&) const;
 
