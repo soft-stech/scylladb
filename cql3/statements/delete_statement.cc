@@ -75,6 +75,10 @@ delete_statement::prepare_internal(data_dictionary::database db, schema_ptr sche
             throw exceptions::invalid_request_exception(format("Invalid identifier {} for deletion (should not be a PRIMARY KEY part)", def->name_as_text()));
         }
 
+        if (!schema->is_compound() && !def->is_primary_key()) {
+            throw exceptions::invalid_request_exception(format("Invalid identifier {} for deletion (cannot delete hidden \"value\" column in compact storage)", def->name_as_text()));
+        }
+
         auto&& op = deletion->prepare(db, schema->ks_name(), *def);
         op->fill_prepare_context(ctx);
         stmt->add_operation(op);
