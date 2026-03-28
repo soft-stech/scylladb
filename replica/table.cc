@@ -928,7 +928,7 @@ void storage_group::for_each_compaction_group(std::function<void(const compactio
     }
 }
 
-utils::small_vector<compaction_group_ptr, 3> storage_group::compaction_groups() noexcept {
+utils::small_vector<compaction_group_ptr, 3> storage_group::compaction_groups() {
     utils::small_vector<compaction_group_ptr, 3> cgs;
     for_each_compaction_group([&cgs] (const compaction_group_ptr& cg) {
         cgs.push_back(cg);
@@ -936,7 +936,7 @@ utils::small_vector<compaction_group_ptr, 3> storage_group::compaction_groups() 
     return cgs;
 }
 
-utils::small_vector<const_compaction_group_ptr, 3> storage_group::compaction_groups() const noexcept {
+utils::small_vector<const_compaction_group_ptr, 3> storage_group::compaction_groups() const {
     utils::small_vector<const_compaction_group_ptr, 3> cgs;
     for_each_compaction_group([&cgs] (const compaction_group_ptr& cg) {
         cgs.push_back(cg);
